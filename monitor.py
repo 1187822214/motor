@@ -19,12 +19,27 @@ STATE_FILE = "state.json"
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 # ===============================================
 
+# 模拟真实浏览器请求头，避免被网站拦截（修复 403 错误）
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "http://www.sxkszx.cn/",
+}
+
 
 def fetch_announcements():
     """抓取首页的"考试公告"列表，返回 [(标题, 链接, 日期), ...]"""
     try:
-        resp = requests.get(TARGET_URL, timeout=15)
+        resp = requests.get(TARGET_URL, headers=HEADERS, timeout=20)
         resp.encoding = "utf-8"
+        if resp.status_code != 200:
+            print(f"[错误] 网站返回状态码: {resp.status_code}")
+            return []
     except requests.RequestException as e:
         print(f"[错误] 请求失败: {e}")
         return []
@@ -50,7 +65,6 @@ def fetch_announcements():
         if link_tag and date_tag:
             title = link_tag.get_text(strip=True)
             href = link_tag.get("href", "")
-            # 补全相对路径
             if href and not href.startswith("http"):
                 href = "http://www.sxkszx.cn" + href
             date = date_tag.get_text(strip=True).strip("[]")
@@ -106,7 +120,7 @@ def push_notification(new_items):
             )
         print(f"[推送] 状态码: {resp.status_code}")
         if resp.status_code != 200:
-            print(f"[推送] 响应: {resp.text[:200]}")
+            print(f"[推送] 响应内容: {resp.text[:200]}")
     except requests.RequestException as e:
         print(f"[错误] 推送失败: {e}")
 
@@ -115,30 +129,36 @@ def main():
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] 开始抓取考试公告...")
 
-    current = fetch_announcements()
-    if not current:
-        print("[结束] 未抓取到任何公告，等待下次运行")
-        return
+    try:
+        current = fetch_announcements()
+        if not current:
+            print("[结束] 未抓取到任何公告，等待下次运行")
+            return
 
-    print(f"当前页面共有 {len(current)} 条公告")
+        print(f"当前页面共有 {len(current)} 条公告")
 
-    state = load_state()
-    seen = set(state.get("seen_urls", []))
+        state = load_state()
+        seen = set(state.get("seen_urls", []))
 
-    new_items = []
-    for title, url, date in current:
-        if url not in seen:
-            new_items.append((title, url, date))
+        new_items = []
+        for title, url, date in current:
+            if url not in seen:
+                new_items.append((title, url, date))
 
-    if new_items:
-        print(f"发现 {len(new_items)} 条新公告，准备推送")
-        push_notification(new_items)
-    else:
-        print("无新公告")
+        if new_items:
+            print(f"发现 {len(new_items)} 条新公告，准备推送")
+            push_notification(new_items)
+        else:
+            print("无新公告")
 
-    current_urls = [url for _, url, _ in current]
-    updated_seen = current_urls + [u for u in state.get("seen_urls", []) if u not in current_urls]
-    save_state(updated_seen)
+        current_urls = [url for _, url, _ in current]
+        updated_seen = current_urls + [u for u in state.get("seen_urls", []) if u not in current_urls]
+        save_state(updated_seen)
+
+    finally:
+        # 确保 state.json 总是被创建，供缓存使用
+        if not os.path.exists(STATE_FILE):
+            save_state([])
 
 
 if __name__ == "__main__":

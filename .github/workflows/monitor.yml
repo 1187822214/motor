@@ -9,6 +9,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+
       - name: 恢复上次状态缓存
         uses: actions/cache/restore@v4
         with:
